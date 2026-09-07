@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>Postgres UI</title>
+  <link rel="stylesheet" href="/src/styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#table-content">Skip to table data</a>
+  <header class="topbar">
+    <div class="brand" aria-label="Postgres UI">Postgres <span>UI</span></div>
+    <label class="database-picker" for="database-select"><span>Database</span><select id="database-select" disabled></select></label>
+    <div class="connection-status" id="connection-status" role="status" aria-live="polite">Connecting…</div>
+  </header>
+  <main class="app-shell">
+    <aside class="sidebar" aria-label="Database explorer">
+      <div class="sidebar-heading"><div><p class="eyebrow">Explorer</p><h1>Schemas</h1></div><button id="refresh-button" class="icon-button" type="button" aria-label="Refresh explorer" title="Refresh">↻</button></div>
+      <div id="schema-tree" class="schema-tree" aria-live="polite"></div>
+    </aside>
+    <section class="content" id="table-content" aria-labelledby="table-title" tabindex="-1">
+      <div id="empty-state" class="empty-state"><div class="empty-mark" aria-hidden="true">▦</div><h2>Choose a table</h2><p>Select a table to inspect its structure and data.</p></div>
+      <div id="table-panel" hidden>
+        <div class="content-header"><div><p id="table-breadcrumb" class="eyebrow">Database</p><h2 id="table-title">Table</h2></div><button id="insert-button" class="primary-button" type="button">New row</button></div>
+        <div class="filter-bar">
+          <select id="filter-column" class="filter-select"><option value="">Filter by column...</option></select>
+          <select id="filter-operator" class="filter-select" disabled>
+            <option value="=">=</option>
+            <option value="!=">≠</option>
+            <option value=">">&gt;</option>
+            <option value="<">&lt;</option>
+            <option value=">=">&ge;</option>
+            <option value="<=">&le;</option>
+            <option value="LIKE">LIKE</option>
+            <option value="ILIKE">ILIKE</option>
+            <option value="IS NULL">IS NULL</option>
+            <option value="IS NOT NULL">IS NOT NULL</option>
+          </select>
+          <input id="filter-value" class="filter-input" type="text" placeholder="Filter value..." disabled>
+          <button id="filter-apply" class="quiet-button" type="button" disabled>Apply</button>
+          <button id="filter-clear" class="quiet-button" type="button" disabled>Clear</button>
+        </div>
+        <div class="table-toolbar"><p id="row-summary" aria-live="polite">Loading rows…</p><div><span id="view-mode-label" class="view-mode-label">Tree View</span><button id="view-toggle" class="quiet-button" type="button" title="Toggle view mode">⊞</button><label for="page-size">Rows</label> <select id="page-size"><option>50</option><option selected>100</option><option>250</option><option>500</option></select><button id="reload-rows-button" class="quiet-button" type="button">Reload</button></div></div>
+        <div id="grid" class="grid" role="grid" aria-label="Table rows"><div id="grid-head" class="grid-head" role="row"></div><div id="grid-scroll" class="grid-scroll" tabindex="0"><div id="grid-spacer"><div id="grid-body" class="grid-body"></div></div></div></div>
+        <nav class="pagination" aria-label="Table pages"><button id="prev-page" class="quiet-button" type="button">Previous</button><span id="page-label">Page 1</span><button id="next-page" class="quiet-button" type="button">Next</button></nav>
+      </div>
+    </section>
+  </main>
+  <div id="modal-root"></div>
+  <div id="toast-region" class="toast-region" role="status" aria-live="polite" aria-atomic="true"></div>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>

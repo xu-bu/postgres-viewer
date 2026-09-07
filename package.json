@@ -1,0 +1,21 @@
+{
+  "name": "postgres-ui",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "bash -c 'set -a; source .env 2>/dev/null || true; set +a; tauri dev'",
+    "build": "bash -c 'set -a; source .env 2>/dev/null || true; set +a; tauri build'",
+    "web:build": "vite build",
+    "web:check": "tsc --noEmit",
+    "test": "npm run web:check"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.8.5",
+    "typescript": "^5.9.2",
+    "vite": "^7.1.4"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.8.0"
+  }
+}
