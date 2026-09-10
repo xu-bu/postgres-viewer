@@ -11,8 +11,10 @@
   <a class="skip-link" href="#table-content">Skip to table data</a>
   <header class="topbar">
     <div class="brand" aria-label="Postgres UI">Postgres <span>UI</span></div>
+    <button id="new-connection-button" class="primary-button compact" type="button" title="New connection">+ New Connection</button>
+    <div id="connection-tabs" class="connection-tabs"></div>
     <label class="database-picker" for="database-select"><span>Database</span><select id="database-select" disabled></select></label>
-    <div class="connection-status" id="connection-status" role="status" aria-live="polite">Connecting…</div>
+    <div class="connection-status" id="connection-status" role="status" aria-live="polite">No connection</div>
   </header>
   <main class="app-shell">
     <aside class="sidebar" aria-label="Database explorer">

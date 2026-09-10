@@ -8,7 +8,7 @@
     "build": "bash -c 'set -a; source .env 2>/dev/null || true; set +a; tauri build'",
     "web:build": "vite build",
     "web:check": "tsc --noEmit",
-    "test": "npm run web:check"
+    "test": "npm run web:check && node --test tests/*.test.mjs"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.8.5",
