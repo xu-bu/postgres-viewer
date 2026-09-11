@@ -6,6 +6,8 @@ type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string
 type SchemaInfo = { name: string; tables: { name: string; tableType: string }[] };
 type ColumnInfo = { name: string; dataType: string; udtName: string; nullable: boolean; hasDefault: boolean; generated: boolean; primaryKey: boolean; ordinal: number };
 type Metadata = { schema: string; table: string; columns: ColumnInfo[]; canMutate: boolean };
+type ExplainResult = { query: string; plan: string };
+type IndexInfo = { name: string; accessMethod: string; isUnique: boolean; isPrimary: boolean; definition: string; size: string };
 type RowItem = { values: Record<string, JsonValue>; rowRef: string | null };
 type RowPage = { rows: RowItem[]; page: number; pageSize: number; total: number; pageCount: number };
 type ConnectionInfo = { server: string; currentDatabase: string; databases: string[] };
@@ -22,6 +24,9 @@ type ConnectionState = {
   page: RowPage | null;
   viewMode: "grid" | "tree";
   currentFilter: { column: string; operator: string; value: string } | null;
+  indexTarget: { schema: string; table: string } | null;
+  indexes: IndexInfo[] | null;
+  indexError: string | null;
   requestGeneration: number;
 };
 
@@ -205,6 +210,30 @@ function openConnectionMenu(x: number, y: number, id: string): void {
   window.setTimeout(() => menu.remove(), 5000);
 }
 
+function openTableMenu(x: number, y: number, schema: string, table: string): void {
+  document.querySelector(".connection-context-menu")?.remove();
+
+  const menu = document.createElement("div");
+  menu.className = "connection-context-menu";
+  menu.setAttribute("role", "menu");
+  menu.style.left = `${Math.min(x, window.innerWidth - 190)}px`;
+  menu.style.top = `${Math.min(y, window.innerHeight - 55)}px`;
+
+  const showIndexes = button("Show Indexes", "connection-context-menu-item", () => {
+    menu.remove();
+    void showIndexesPage(schema, table);
+  });
+  showIndexes.setAttribute("role", "menuitem");
+  menu.append(showIndexes);
+  document.body.append(menu);
+
+  const dismiss = (event: MouseEvent): void => {
+    if (!menu.contains(event.target as Node)) menu.remove();
+  };
+  document.addEventListener("mousedown", dismiss, { once: true });
+  window.setTimeout(() => menu.remove(), 5000);
+}
+
 function updateTabs(): void {
   document.querySelectorAll(".connection-tab").forEach((tab) => {
     const el = tab as HTMLElement;
@@ -225,6 +254,130 @@ function switchConnection(id: string): void {
   updateTabs();
   renderConnectionState();
   if (getActiveConnection()?.info) void loadTree();
+}
+
+function renderIndexPage(connection: ConnectionState): void {
+  const target = connection.indexTarget;
+  if (!target) return;
+
+  $("empty-state").hidden = true;
+  $("table-panel").hidden = true;
+  $("index-panel").hidden = false;
+  $("index-breadcrumb").textContent = `${connection.database} / ${target.schema}`;
+  $("index-title").textContent = `${target.table} indexes`;
+
+  const summary = $("index-summary");
+  const list = $("index-list");
+  empty(list);
+
+  if (connection.indexError) {
+    summary.textContent = "Could not load indexes.";
+    const error = document.createElement("p");
+    error.className = "index-message error";
+    error.textContent = connection.indexError;
+    list.append(error);
+    return;
+  }
+
+  if (!connection.indexes) {
+    summary.textContent = "Loading indexes…";
+    const loading = document.createElement("p");
+    loading.className = "index-message";
+    loading.textContent = "Loading indexes…";
+    list.append(loading);
+    return;
+  }
+
+  const indexes = connection.indexes;
+  summary.textContent = `${indexes.length.toLocaleString()} index${indexes.length === 1 ? "" : "es"}`;
+  if (!indexes.length) {
+    const emptyMessage = document.createElement("p");
+    emptyMessage.className = "index-message";
+    emptyMessage.textContent = "This table has no indexes.";
+    list.append(emptyMessage);
+    return;
+  }
+
+  const indexTable = document.createElement("table");
+  indexTable.className = "index-table";
+  const headerRow = document.createElement("tr");
+  for (const label of ["Name", "Type", "Properties", "Definition", "Size"]) {
+    const cell = document.createElement("th");
+    cell.scope = "col";
+    cell.textContent = label;
+    headerRow.append(cell);
+  }
+  const head = document.createElement("thead");
+  head.append(headerRow);
+
+  const body = document.createElement("tbody");
+  for (const index of indexes) {
+    const row = document.createElement("tr");
+    const name = document.createElement("th");
+    name.scope = "row";
+    name.textContent = index.name;
+    const type = document.createElement("td");
+    type.textContent = index.accessMethod;
+    const properties = document.createElement("td");
+    properties.textContent = index.isPrimary ? "Primary key" : index.isUnique ? "Unique" : "—";
+    const definition = document.createElement("td");
+    definition.className = "index-definition";
+    definition.textContent = index.definition;
+    const size = document.createElement("td");
+    size.textContent = index.size;
+    row.append(name, type, properties, definition, size);
+    body.append(row);
+  }
+  indexTable.append(head, body);
+  list.append(indexTable);
+}
+
+async function showIndexesPage(schema: string, table: string): Promise<void> {
+  const conn = getActiveConnection();
+  if (!conn) return;
+
+  const generation = ++conn.requestGeneration;
+  conn.indexTarget = { schema, table };
+  conn.indexes = null;
+  conn.indexError = null;
+  renderIndexPage(conn);
+  setBusy(true);
+
+  try {
+    conn.indexes = await invoke<IndexInfo[]>("get_table_indexes", {
+      connection: conn.config,
+      request: { database: conn.database, schema, table },
+    });
+    if (!isCurrent(generation, conn)) return;
+    renderIndexPage(conn);
+  } catch (error) {
+    if (!isCurrent(generation, conn)) return;
+    conn.indexError = message(error);
+    renderIndexPage(conn);
+    toast(`Could not load indexes: ${message(error)}`, true);
+  } finally {
+    if (isCurrent(generation, conn)) setBusy(false);
+  }
+}
+
+function returnToTable(): void {
+  const conn = getActiveConnection();
+  const target = conn?.indexTarget;
+  if (!conn || !target) return;
+
+  conn.requestGeneration += 1;
+  conn.indexTarget = null;
+  conn.indexes = null;
+  conn.indexError = null;
+  setBusy(false);
+  const link = document.querySelector<HTMLButtonElement>(`.table-link[data-schema="${CSS.escape(target.schema)}"][data-table="${CSS.escape(target.table)}"]`);
+  if (conn.selected?.schema === target.schema && conn.selected.table === target.table && conn.metadata && conn.page) {
+    renderConnectionState();
+  } else if (link) {
+    void selectTable(target.schema, target.table, link);
+  } else {
+    renderConnectionState();
+  }
 }
 
 async function closeConnection(id: string, forget = true): Promise<void> {
@@ -270,6 +423,8 @@ function renderConnectionState(): void {
     empty(tree);
     $("empty-state").hidden = false;
     $("table-panel").hidden = true;
+    $("index-panel").hidden = true;
+    $<HTMLButtonElement>("explain-query-button").disabled = true;
     return;
   }
 
@@ -281,6 +436,8 @@ function renderConnectionState(): void {
     empty(tree);
     $("empty-state").hidden = false;
     $("table-panel").hidden = true;
+    $("index-panel").hidden = true;
+    $<HTMLButtonElement>("explain-query-button").disabled = true;
     if (conn.error) {
       const error = document.createElement("p");
       error.className = "tree-message";
@@ -306,9 +463,13 @@ function renderConnectionState(): void {
   dbSelect.disabled = false;
 
   // Render tree and table state
-  if (conn.selected && conn.metadata && conn.page) {
+  if (conn.indexTarget) {
+    renderIndexPage(conn);
+  } else if (conn.selected && conn.metadata && conn.page) {
     $("empty-state").hidden = true;
     $("table-panel").hidden = false;
+    $("index-panel").hidden = true;
+    $<HTMLButtonElement>("explain-query-button").disabled = false;
     $("table-breadcrumb").textContent = `${conn.database} / ${conn.selected.schema}`;
     $("table-title").textContent = conn.selected.table;
     renderGrid();
@@ -316,6 +477,8 @@ function renderConnectionState(): void {
   } else {
     $("empty-state").hidden = false;
     $("table-panel").hidden = true;
+    $("index-panel").hidden = true;
+    $<HTMLButtonElement>("explain-query-button").disabled = true;
   }
 }
 
@@ -433,6 +596,9 @@ async function createConnection(config: ConnectionConfig, existing?: ConnectionS
     page: null,
     viewMode: "tree",
     currentFilter: null,
+    indexTarget: null,
+    indexes: null,
+    indexError: null,
     requestGeneration: 0,
   };
 
@@ -486,9 +652,13 @@ async function loadTree(): Promise<void> {
   conn.selected = null;
   conn.metadata = null;
   conn.page = null;
+  conn.indexTarget = null;
+  conn.indexes = null;
+  conn.indexError = null;
 
   $("empty-state").hidden = false;
   $("table-panel").hidden = true;
+  $("index-panel").hidden = true;
   empty(tree);
 
   const loading = document.createElement("p");
@@ -534,6 +704,10 @@ async function loadTree(): Promise<void> {
         link.title = `${table.tableType}: ${schema.name}.${table.name}`;
         link.dataset.schema = schema.name;
         link.dataset.table = table.name;
+        link.addEventListener("contextmenu", (event) => {
+          event.preventDefault();
+          openTableMenu(event.clientX, event.clientY, schema.name, table.name);
+        });
         li.append(link);
         list.append(li);
       }
@@ -562,6 +736,9 @@ async function selectTable(schema: string, table: string, link: HTMLButtonElemen
 
   const generation = ++conn.requestGeneration;
   conn.selected = { schema, table };
+  conn.indexTarget = null;
+  conn.indexes = null;
+  conn.indexError = null;
   saveViewState(conn);
 
   document.querySelectorAll(".table-link.active").forEach((el) => el.classList.remove("active"));
@@ -569,6 +746,8 @@ async function selectTable(schema: string, table: string, link: HTMLButtonElemen
 
   $("empty-state").hidden = true;
   $("table-panel").hidden = false;
+  $("index-panel").hidden = true;
+  $<HTMLButtonElement>("explain-query-button").disabled = true;
   $("table-breadcrumb").textContent = `${conn.database} / ${schema}`;
   $("table-title").textContent = table;
   $("row-summary").textContent = "Loading structure and rows…";
@@ -585,6 +764,7 @@ async function selectTable(schema: string, table: string, link: HTMLButtonElemen
 
     $("insert-button").toggleAttribute("disabled", !conn.metadata.canMutate);
     $("insert-button").title = conn.metadata.canMutate ? "Insert a row" : "Mutations require a primary key";
+    $<HTMLButtonElement>("explain-query-button").disabled = false;
     populateFilterColumns();
     await loadRows(0, generation);
   } catch (error) {
@@ -648,6 +828,67 @@ function applyFilter(): void {
     };
   }
   renderGrid();
+}
+
+async function explainCurrentQuery(): Promise<void> {
+  const conn = getActiveConnection();
+  if (!conn || !conn.selected || !conn.metadata || !conn.page) return;
+
+  const target = conn.selected;
+  const explainButton = $<HTMLButtonElement>("explain-query-button");
+  explainButton.disabled = true;
+  const dialog = openModal("Explain Query", `${target.schema}.${target.table} · PostgreSQL execution plan`);
+  const loading = document.createElement("p");
+  loading.className = "explain-message";
+  loading.textContent = "Loading execution plan…";
+  dialog.body.append(loading);
+  dialog.footer.append(button("Close", "quiet-button", dialog.close));
+
+  try {
+    const result = await invoke<ExplainResult>("explain_query", {
+      connection: conn.config,
+      request: {
+        database: conn.database,
+        ...target,
+        page: conn.page.page,
+        pageSize: conn.page.pageSize,
+      },
+    });
+    if (!dialog.body.isConnected) return;
+
+    empty(dialog.body);
+    if (conn.currentFilter) {
+      const note = document.createElement("p");
+      note.className = "explain-note";
+      note.textContent = "The current filter is applied in the UI after rows are fetched, so it is not included in this SQL.";
+      dialog.body.append(note);
+    }
+
+    const queryLabel = document.createElement("h3");
+    queryLabel.className = "explain-heading";
+    queryLabel.textContent = "SQL statement";
+    const query = document.createElement("pre");
+    query.className = "explain-block";
+    query.textContent = result.query;
+
+    const planLabel = document.createElement("h3");
+    planLabel.className = "explain-heading";
+    planLabel.textContent = "Execution plan";
+    const plan = document.createElement("pre");
+    plan.className = "explain-block";
+    plan.textContent = result.plan;
+    dialog.body.append(queryLabel, query, planLabel, plan);
+  } catch (error) {
+    if (!dialog.body.isConnected) return;
+    empty(dialog.body);
+    const errorMessage = document.createElement("p");
+    errorMessage.className = "explain-message error";
+    errorMessage.textContent = message(error);
+    dialog.body.append(errorMessage);
+    toast(`Could not explain query: ${message(error)}`, true);
+  } finally {
+    if (getActiveConnection() === conn && conn.selected === target) explainButton.disabled = false;
+  }
 }
 
 function getFilteredRows(): RowItem[] {
@@ -991,6 +1232,15 @@ function renderTreeView(hasActions: boolean): void {
       keyCell.title = `${col.dataType}${col.nullable ? ", nullable" : ""}`;
       makeCellSelectable(keyCell, col.name);
       keyCell.setAttribute("draggable", "true");
+      keyCell.addEventListener("dragstart", (event: DragEvent) => {
+        if (!event.dataTransfer) return;
+        event.dataTransfer.effectAllowed = "copy";
+        event.dataTransfer.setData("text/plain", col.name);
+        keyCell.style.opacity = "0.5";
+      });
+      keyCell.addEventListener("dragend", () => {
+        keyCell.style.opacity = "";
+      });
 
       const valueCell = document.createElement("td");
       const value = item.values[col.name] ?? null;
@@ -1295,6 +1545,9 @@ dbSelect.addEventListener("change", async () => {
   if (!conn) return;
   conn.database = dbSelect.value;
   conn.selected = null;
+  conn.indexTarget = null;
+  conn.indexes = null;
+  conn.indexError = null;
   saveViewState(conn);
   await loadTree();
 });
@@ -1303,6 +1556,7 @@ $("refresh-button").addEventListener("click", loadTree);
 $("reload-rows-button").addEventListener("click", () => loadRows());
 $("export-csv-button").addEventListener("click", exportCsv);
 $("insert-button").addEventListener("click", () => openForm("insert"));
+$<HTMLButtonElement>("back-to-table-button").addEventListener("click", returnToTable);
 $<HTMLSelectElement>("page-size").addEventListener("change", () => loadRows(0));
 $("prev-page").addEventListener("click", () => {
   const conn = getActiveConnection();
@@ -1352,6 +1606,7 @@ $<HTMLSelectElement>("filter-operator").addEventListener("change", (e) => {
 });
 
 $("filter-apply").addEventListener("click", applyFilter);
+$("explain-query-button").addEventListener("click", () => void explainCurrentQuery());
 $("filter-clear").addEventListener("click", () => {
   $<HTMLSelectElement>("filter-column").value = "";
   $<HTMLSelectElement>("filter-operator").disabled = true;
@@ -1368,6 +1623,31 @@ $("filter-clear").addEventListener("click", () => {
 
 $<HTMLInputElement>("filter-value").addEventListener("keydown", (e) => {
   if (e.key === "Enter") applyFilter();
+});
+
+const filterColumnSelect = $<HTMLSelectElement>("filter-column");
+
+filterColumnSelect.addEventListener("dragover", (event: DragEvent) => {
+  event.preventDefault();
+  if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
+  filterColumnSelect.style.background = "var(--accent-soft)";
+});
+
+filterColumnSelect.addEventListener("dragleave", () => {
+  filterColumnSelect.style.background = "";
+});
+
+filterColumnSelect.addEventListener("drop", (event: DragEvent) => {
+  event.preventDefault();
+  filterColumnSelect.style.background = "";
+
+  const fieldName = event.dataTransfer?.getData("text/plain") ?? "";
+  const option = Array.from(filterColumnSelect.options).find((candidate) => candidate.value === fieldName);
+  if (!option) return;
+
+  filterColumnSelect.value = fieldName;
+  filterColumnSelect.dispatchEvent(new Event("change"));
+  $<HTMLInputElement>("filter-value").focus();
 });
 
 newConnectionButton.addEventListener("click", () => openConnectionDialog());

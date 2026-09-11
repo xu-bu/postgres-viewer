@@ -127,6 +127,24 @@ struct TableMetadata {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+struct ExplainResult {
+    query: String,
+    plan: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct IndexInfo {
+    name: String,
+    access_method: String,
+    is_unique: bool,
+    is_primary: bool,
+    definition: String,
+    size: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct RowItem {
     values: Value,
     row_ref: Option<String>,
@@ -350,6 +368,45 @@ async fn get_table_metadata(request: TableRequest, connection: Option<Connection
 }
 
 #[tauri::command]
+async fn get_table_indexes(request: TableRequest, connection: Option<ConnectionConfig>, state: tauri::State<'_, AppState>) -> Result<Vec<IndexInfo>> {
+    let client = connect(&state, Some(&request.database), connection.as_ref()).await?;
+    let sql = r#"
+        SELECT i.relname, am.amname, x.indisunique, x.indisprimary,
+               pg_get_indexdef(x.indexrelid), pg_size_pretty(pg_relation_size(x.indexrelid))
+        FROM pg_index x
+        JOIN pg_class i ON i.oid = x.indexrelid
+        JOIN pg_class t ON t.oid = x.indrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+        JOIN pg_am am ON am.oid = i.relam
+        WHERE n.nspname = $1 AND t.relname = $2
+        ORDER BY x.indisprimary DESC, x.indisunique DESC, i.relname"#;
+    client.query(sql, &[&request.schema, &request.table]).await.map_err(|e| e.to_string())?.into_iter().map(|row| Ok(IndexInfo {
+        name: row.get(0), access_method: row.get(1), is_unique: row.get(2), is_primary: row.get(3), definition: row.get(4), size: row.get(5),
+    })).collect()
+}
+
+#[tauri::command]
+async fn explain_query(request: PageRequest, connection: Option<ConnectionConfig>, state: tauri::State<'_, AppState>) -> Result<ExplainResult> {
+    let page_size = request.page_size.unwrap_or(DEFAULT_PAGE_SIZE).clamp(1, MAX_PAGE_SIZE);
+    let page = request.page.unwrap_or(0);
+    let offset = i64::from(page)
+        .checked_mul(i64::from(page_size))
+        .ok_or("Requested page is too large")?;
+    let client = connect(&state, Some(&request.database), connection.as_ref()).await?;
+    let cols = columns(&client, &request.schema, &request.table).await?;
+    if cols.is_empty() { return Err("Table not found or has no visible columns".into()); }
+    let order = if cols.iter().any(|column| column.primary_key) {
+        cols.iter().filter(|column| column.primary_key).map(|column| quote_ident(&column.name)).collect::<Vec<_>>().join(", ")
+    } else {
+        "ctid".into()
+    };
+    let query = format!("SELECT to_jsonb(t), count(*) OVER () FROM {} t ORDER BY {} LIMIT {} OFFSET {}", qualified(&request.schema, &request.table), order, page_size, offset);
+    let explain = format!("EXPLAIN (FORMAT TEXT) {query}");
+    let plan = client.query(&explain, &[]).await.map_err(|e| e.to_string())?.into_iter().map(|row| row.get::<_, String>(0)).collect::<Vec<_>>().join("\n");
+    Ok(ExplainResult { query, plan })
+}
+
+#[tauri::command]
 async fn get_rows(request: PageRequest, connection: Option<ConnectionConfig>, state: tauri::State<'_, AppState>) -> Result<RowPage> {
     let page_size = request.page_size.unwrap_or(DEFAULT_PAGE_SIZE).clamp(1, MAX_PAGE_SIZE);
     let page = request.page.unwrap_or(0);
@@ -481,7 +538,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState { base_config, ssl_mode, signer })
-        .invoke_handler(tauri::generate_handler![debug_log, connect_server, forget_connection_password, write_export_file, remove_export_file, list_schemas, get_table_metadata, get_rows, insert_row, update_row, delete_row])
+        .invoke_handler(tauri::generate_handler![debug_log, connect_server, forget_connection_password, write_export_file, remove_export_file, list_schemas, get_table_metadata, get_table_indexes, explain_query, get_rows, insert_row, update_row, delete_row])
         .run(tauri::generate_context!())
         .expect("error while running Postgres UI");
 }

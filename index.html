@@ -42,10 +42,16 @@
           <input id="filter-value" class="filter-input" type="text" placeholder="Filter value..." disabled>
           <button id="filter-apply" class="quiet-button" type="button" disabled>Apply</button>
           <button id="filter-clear" class="quiet-button" type="button" disabled>Clear</button>
+          <button id="explain-query-button" class="quiet-button" type="button" disabled>Explain Query</button>
         </div>
         <div class="table-toolbar"><p id="row-summary" aria-live="polite">Loading rows…</p><div><span id="view-mode-label" class="view-mode-label">Tree View</span><button id="view-toggle" class="quiet-button" type="button" title="Toggle view mode">⊞</button><label for="page-size">Rows</label> <select id="page-size"><option selected>50</option><option>100</option><option>250</option><option>500</option></select><button id="reload-rows-button" class="quiet-button" type="button">Reload</button><button id="export-csv-button" class="quiet-button" type="button">Export CSV</button></div></div>
         <div id="grid" class="grid" role="grid" aria-label="Table rows"><div id="grid-head" class="grid-head" role="row"></div><div id="grid-scroll" class="grid-scroll" tabindex="0"><div id="grid-spacer"><div id="grid-body" class="grid-body"></div></div></div></div>
         <nav class="pagination" aria-label="Table pages"><button id="prev-page" class="quiet-button" type="button">Previous</button><span id="page-label">Page 1</span><button id="next-page" class="quiet-button" type="button">Next</button></nav>
+      </div>
+      <div id="index-panel" hidden>
+        <div class="content-header"><div><p id="index-breadcrumb" class="eyebrow">Database / schema</p><h2 id="index-title">Indexes</h2></div><button id="back-to-table-button" class="quiet-button" type="button">Back to table</button></div>
+        <p id="index-summary" class="index-summary" aria-live="polite">Loading indexes…</p>
+        <div id="index-list" class="index-list"></div>
       </div>
     </section>
   </main>
