@@ -113,7 +113,7 @@ function createTab(id: string, label: string): void {
   closeBtn.title = "Close connection";
   closeBtn.addEventListener("click", (e) => {
     e.stopPropagation();
-    closeConnection(id);
+    void closeConnection(id);
   });
 
   tab.append(labelEl, closeBtn);
@@ -147,15 +147,19 @@ function switchConnection(id: string): void {
   if (getActiveConnection()?.info) void loadTree();
 }
 
-function closeConnection(id: string, forget = true): void {
+async function closeConnection(id: string, forget = true): Promise<void> {
   const connection = connections.get(id);
   if (forget && connection) {
     try {
+      if (connection.config?.username) {
+        await invoke("forget_connection_password", { connection: connection.config });
+      }
       const remaining = savedConnections.filter((config) => !sameConnection(config, connection.config));
       saveConnections(localStorage, remaining);
       savedConnections = remaining;
     } catch (error) {
       toast(`Could not remove saved connection: ${message(error)}`, true);
+      return;
     }
   }
   connections.delete(id);
@@ -258,7 +262,7 @@ function reconnectConnection(connection: ConnectionState): void {
 function openConnectionDialog(existing?: ConnectionState): void {
   const dialog = openModal(
     existing ? "Reconnect" : "New Connection",
-    existing ? "Re-enter your password to reconnect to this server." : "Enter PostgreSQL server details. Passwords are kept for this session only."
+    existing ? "Update your credentials to reconnect. Passwords are saved securely in your OS credential store." : "Enter PostgreSQL server details. Passwords are saved securely so connections reconnect automatically after restart."
   );
 
   const form = document.createElement("form");
@@ -374,7 +378,7 @@ async function createConnection(config: ConnectionConfig, existing?: ConnectionS
       updateTabs();
       if (activeConnectionId === id) renderConnectionState();
     } else {
-      closeConnection(id, false);
+      await closeConnection(id, false);
     }
     throw error;
   }

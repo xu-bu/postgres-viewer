@@ -7,7 +7,9 @@ use std::collections::BTreeMap;
 use std::env;
 use tokio_postgres::{Client, Config, NoTls};
 
-const DEFAULT_PAGE_SIZE: u32 = 100;
+mod credentials;
+
+const DEFAULT_PAGE_SIZE: u32 = 50;
 const MAX_PAGE_SIZE: u32 = 500;
 
 type HmacSha256 = Hmac<Sha256>;
@@ -20,7 +22,7 @@ struct AppState {
     signer: RowSigner,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 struct ConnectionConfig {
     host: String,
     port: String,
@@ -242,6 +244,13 @@ fn connection_config(base: &Config, connection: Option<&ConnectionConfig>) -> Re
 }
 
 async fn connect(state: &AppState, database: Option<&str>, connection: Option<&ConnectionConfig>) -> Result<Client> {
+    let mut restored = connection.cloned();
+    if let Some(connection) = restored.as_mut() {
+        if connection.username.is_some() && connection.password.is_none() {
+            connection.password = credentials::load(connection.identity()).await?;
+        }
+    }
+    let connection = restored.as_ref();
     let mut config = connection_config(&state.base_config, connection)?;
     if let Some(database) = database { config.dbname(database); }
     if state.ssl_mode == "disable" {
@@ -294,7 +303,20 @@ async fn connect_server(connection: Option<ConnectionConfig>, state: tauri::Stat
     let rows = client.query("SELECT datname FROM pg_database WHERE datallowconn AND NOT datistemplate ORDER BY datname", &[]).await.map_err(|e| e.to_string())?;
     let databases = rows.into_iter().map(|r| r.get(0)).collect();
     let row = client.query_one("SELECT current_database(), COALESCE(inet_server_addr()::text, 'local') || ':' || inet_server_port()", &[]).await.map_err(|e| e.to_string())?;
+    if let Some(connection) = connection.as_ref() {
+        if let Some(password) = connection.password.as_ref() {
+            credentials::save(connection.identity(), password.clone()).await?;
+        }
+    }
     Ok(ConnectionInfo { current_database: row.get(0), server: row.get(1), databases })
+}
+
+#[tauri::command]
+async fn forget_connection_password(connection: ConnectionConfig) -> Result<()> {
+    if connection.username.is_some() {
+        credentials::remove(connection.identity()).await?;
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -448,7 +470,7 @@ pub fn run() {
     let signer = RowSigner::new(secret).unwrap_or_else(|error| panic!("Configuration error: {error}"));
     tauri::Builder::default()
         .manage(AppState { base_config, ssl_mode, signer })
-        .invoke_handler(tauri::generate_handler![debug_log, connect_server, list_schemas, get_table_metadata, get_rows, insert_row, update_row, delete_row])
+        .invoke_handler(tauri::generate_handler![debug_log, connect_server, forget_connection_password, list_schemas, get_table_metadata, get_rows, insert_row, update_row, delete_row])
         .run(tauri::generate_context!())
         .expect("error while running Postgres UI");
 }
