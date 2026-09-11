@@ -191,21 +191,10 @@ fn qualified(schema: &str, table: &str) -> String {
     format!("{}.{}", quote_ident(schema), quote_ident(table))
 }
 
-fn config_from_env() -> Result<(Config, String)> {
-    let mut config = if let Ok(url) = env::var("DATABASE_URL") {
-        url.parse::<Config>().map_err(|e| format!("Invalid DATABASE_URL: {e}"))?
-    } else {
-        let mut c = Config::new();
-        c.host(&env::var("PGHOST").unwrap_or_else(|_| "localhost".into()));
-        c.port(env::var("PGPORT").ok().and_then(|v| v.parse().ok()).unwrap_or(5432));
-        c.user(&env::var("PGUSER").unwrap_or_else(|_| "postgres".into()));
-        if let Ok(password) = env::var("PGPASSWORD") { c.password(password); }
-        c.dbname(&env::var("PGDATABASE").unwrap_or_else(|_| "postgres".into()));
-        c
-    };
-    if config.get_dbname().is_none() { config.dbname("postgres"); }
-    let ssl_mode = env::var("PGSSLMODE").unwrap_or_else(|_| "prefer".into());
-    Ok((config, ssl_mode))
+fn default_config() -> (Config, String) {
+    let mut config = Config::new();
+    config.dbname("postgres");
+    (config, "prefer".into())
 }
 
 fn connection_config(base: &Config, connection: Option<&ConnectionConfig>) -> Result<Config> {
@@ -481,7 +470,7 @@ pub fn run() {
     #[cfg(target_os = "linux")]
     std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
 
-    let (base_config, ssl_mode) = config_from_env().unwrap_or_else(|error| panic!("Configuration error: {error}"));
+    let (base_config, ssl_mode) = default_config();
     let secret = env::var("POSTGRESUI_ROWKEY_SECRET").map(|v| v.into_bytes()).unwrap_or_else(|_| {
         use rand::RngCore;
         let mut bytes = vec![0; 32];

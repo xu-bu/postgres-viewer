@@ -14,22 +14,13 @@ The table toolbar includes **Export CSV**, which downloads the currently loaded 
 
 **Configuration:**
 
-Create a `.env` file (see `.env.example`) or export environment variables:
-
-```sh
-export DATABASE_URL='postgresql://postgres:secret@localhost:5432/postgres'
-export PGSSLMODE=prefer
-```
-
-Alternatively, set individual variables: `PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, `PGDATABASE` (defaults: `localhost`, `5432`, `postgres`, no password, `postgres`).
-
-On first launch, the app connects using this environment configuration. Use **New Connection → Save & Connect** to enter a host, port, username, and password. Successfully connected profiles save the host, port, and username locally; passwords are saved separately in the OS credential store, never in browser local storage. On restart, the Rust backend retrieves the saved passwords and automatically reconnects. Connections that are unavailable remain as disconnected tabs; click the tab or its **Reconnect** button to retry or update credentials. Closing a connection tab removes its saved profile and password. Additional connections inherit the environment's initial database and connection options, but use the credentials you enter. Older profiles without a username continue to use environment credentials.
+On first launch, use **New Connection → Save & Connect** to enter a host, port, username, and password. Successfully connected profiles save the host, port, and username locally; passwords are saved separately in the OS credential store, never in browser local storage. On restart, the Rust backend retrieves the saved passwords and automatically reconnects. Connections that are unavailable remain as disconnected tabs; click the tab or its **Reconnect** button to retry or update credentials. Closing a connection tab removes its saved profile and password.
 
 **Existing profiles:** Passwords from older versions were session-only. Reconnect and enter each password once to save it securely for future launches.
 
 **Credential store:** macOS uses Keychain, Windows uses Credential Manager, and Linux requires an unlocked Secret Service keyring (such as GNOME Keyring or KWallet with Secret Service enabled). If the store is unavailable or locked, the app reports an error rather than saving passwords in plaintext. Linux builds also require the D-Bus development package (`libdbus-1-dev` on Debian/Ubuntu).
 
-Optional: Set `POSTGRESUI_ROWKEY_SECRET` to persist row references across restarts:
+Optional: Set `POSTGRESUI_ROWKEY_SECRET` in the process environment to persist row references across restarts:
 ```sh
 export POSTGRESUI_ROWKEY_SECRET=$(openssl rand -base64 32)
 ```

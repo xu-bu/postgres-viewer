@@ -4,8 +4,8 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "bash -c 'set -a; source .env 2>/dev/null || true; set +a; tauri dev'",
-    "build": "bash -c 'set -a; source .env 2>/dev/null || true; set +a; tauri build'",
+    "dev": "tauri dev",
+    "build": "tauri build",
     "web:build": "vite build",
     "web:check": "tsc --noEmit",
     "test": "npm run web:check && node --test tests/*.test.mjs"

@@ -68,6 +68,7 @@ const OVERSCAN = 8;
 let busy = false;
 let lastFocus: HTMLElement | null = null;
 let lastRenderedRange = { start: -1, end: -1 };
+let selectedCell: HTMLElement | null = null;
 
 function getActiveConnection(): ConnectionState | null {
   return activeConnectionId ? connections.get(activeConnectionId) || null : null;
@@ -110,6 +111,25 @@ function button(text: string, className: string, action: () => void): HTMLButton
   el.textContent = text;
   el.addEventListener("click", action);
   return el;
+}
+
+function selectCell(cell: HTMLElement): void {
+  selectedCell?.classList.remove("selected");
+  selectedCell = cell;
+  cell.classList.add("selected");
+}
+
+function makeCellSelectable(cell: HTMLElement, value: string): void {
+  cell.classList.add("selectable-cell");
+  cell.dataset.value = value;
+  cell.tabIndex = 0;
+  cell.addEventListener("click", () => selectCell(cell));
+  cell.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      selectCell(cell);
+    }
+  });
 }
 
 function createConnectionId(): string {
@@ -969,7 +989,7 @@ function renderTreeView(hasActions: boolean): void {
       keyCell.className = "tree-key selectable-cell draggable-key";
       keyCell.textContent = `${col.name}${col.primaryKey ? " 🔑" : ""}`;
       keyCell.title = `${col.dataType}${col.nullable ? ", nullable" : ""}`;
-      keyCell.setAttribute("data-value", col.name);
+      makeCellSelectable(keyCell, col.name);
       keyCell.setAttribute("draggable", "true");
 
       const valueCell = document.createElement("td");
@@ -983,14 +1003,12 @@ function renderTreeView(hasActions: boolean): void {
         const fullText = displayValue(value);
         valueCell.textContent = fullText.length > 200 ? fullText.slice(0, 200) + "…" : fullText;
         valueCell.title = fullText;
-        valueCell.classList.add("selectable-cell");
-        valueCell.setAttribute("data-value", fullText);
+        makeCellSelectable(valueCell, fullText);
       } else {
         const fullText = displayValue(value);
         valueCell.textContent = fullText.length > 200 ? fullText.slice(0, 200) + "…" : fullText;
         valueCell.title = fullText;
-        valueCell.classList.add("selectable-cell");
-        valueCell.setAttribute("data-value", fullText);
+        makeCellSelectable(valueCell, fullText);
       }
 
       row.append(keyCell, valueCell);
@@ -1042,6 +1060,7 @@ function renderVisibleRows(): void {
       cell.role = "gridcell";
       cell.textContent = displayValue(value);
       cell.title = cell.textContent;
+      makeCellSelectable(cell, cell.textContent);
       row.append(cell);
     }
 
@@ -1357,13 +1376,15 @@ async function start(): Promise<void> {
   try {
     const stored = loadConnections(localStorage);
     savedConnections = stored ?? [];
-    for (const config of stored ?? [null]) {
+    for (const config of stored ?? []) {
+      if (config === null) continue;
       try {
         await createConnection(config, undefined, true);
       } catch (error) {
         toast(`${connectionLabel(config)}: ${message(error)} Click its tab to reconnect.`, true);
       }
     }
+    if (stored === null || stored.length === 0) renderConnectionState();
     if (!getActiveConnection()) renderConnectionState();
   } catch (error) {
     status.textContent = message(error);
