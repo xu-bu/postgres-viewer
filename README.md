@@ -2,6 +2,8 @@
 
 A focused Tauri 2 desktop client for browsing PostgreSQL servers and editing tables with primary keys. All database operations run in the Rust process and are exposed only through Tauri IPC; the application opens no HTTP or database proxy listener.
 
+The table toolbar includes **Export CSV**, which downloads the currently loaded page of rows. Any active filter is applied to the exported rows, and PostgreSQL `NULL` values are exported as empty CSV fields.
+
 ## Setup and Run
 
 **Prerequisites:**

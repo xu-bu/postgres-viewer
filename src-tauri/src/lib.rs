@@ -320,6 +320,24 @@ async fn forget_connection_password(connection: ConnectionConfig) -> Result<()> 
 }
 
 #[tauri::command]
+fn write_export_file(path: String, contents: String, append: bool) -> Result<()> {
+    use std::fs::OpenOptions;
+    use std::io::Write;
+    let mut file = OpenOptions::new().create(true).write(true).append(append).truncate(!append)
+        .open(path).map_err(|error| format!("Could not open export file: {error}"))?;
+    file.write_all(contents.as_bytes()).map_err(|error| format!("Could not write export file: {error}"))
+}
+
+#[tauri::command]
+fn remove_export_file(path: String) -> Result<()> {
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!("Could not remove export file: {error}")),
+    }
+}
+
+#[tauri::command]
 async fn list_schemas(database: String, connection: Option<ConnectionConfig>, state: tauri::State<'_, AppState>) -> Result<Vec<SchemaInfo>> {
     let client = connect(&state, Some(&database), connection.as_ref()).await?;
     let sql = r#"SELECT n.nspname, c.relname,
@@ -460,6 +478,9 @@ fn debug_log(message: String) {
 }
 
 pub fn run() {
+    #[cfg(target_os = "linux")]
+    std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+
     let (base_config, ssl_mode) = config_from_env().unwrap_or_else(|error| panic!("Configuration error: {error}"));
     let secret = env::var("POSTGRESUI_ROWKEY_SECRET").map(|v| v.into_bytes()).unwrap_or_else(|_| {
         use rand::RngCore;
@@ -469,8 +490,9 @@ pub fn run() {
     });
     let signer = RowSigner::new(secret).unwrap_or_else(|error| panic!("Configuration error: {error}"));
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .manage(AppState { base_config, ssl_mode, signer })
-        .invoke_handler(tauri::generate_handler![debug_log, connect_server, forget_connection_password, list_schemas, get_table_metadata, get_rows, insert_row, update_row, delete_row])
+        .invoke_handler(tauri::generate_handler![debug_log, connect_server, forget_connection_password, write_export_file, remove_export_file, list_schemas, get_table_metadata, get_rows, insert_row, update_row, delete_row])
         .run(tauri::generate_context!())
         .expect("error while running Postgres UI");
 }

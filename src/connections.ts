@@ -1,4 +1,4 @@
-export type ConnectionConfig = { host: string; port: string; username?: string; password?: string } | null;
+export type ConnectionConfig = { name?: string; host: string; port: string; username?: string; password?: string } | null;
 
 const STORAGE_KEY = "postgresui.connections.v1";
 
@@ -10,6 +10,7 @@ export function loadConnections(storage: Storage): ConnectionConfig[] | null {
     typeof config === "object" && typeof config.host === "string" && config.host.trim() !== "" &&
     typeof config.port === "string" && /^\d+$/.test(config.port) &&
     Number(config.port) >= 1 && Number(config.port) <= 65535 &&
+    (config.name === undefined || (typeof config.name === "string" && config.name.trim() !== "")) &&
     (config.username === undefined || (typeof config.username === "string" && config.username.trim() !== ""))
   ))) {
     throw new Error("Saved connections are invalid");
@@ -20,6 +21,7 @@ export function loadConnections(storage: Storage): ConnectionConfig[] | null {
 function connectionProfile(config: ConnectionConfig): ConnectionConfig {
   if (config === null) return null;
   return {
+    ...(config.name === undefined ? {} : { name: config.name }),
     host: config.host,
     port: config.port,
     ...(config.username === undefined ? {} : { username: config.username }),

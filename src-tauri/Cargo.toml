@@ -26,6 +26,7 @@ base64 = "0.22"
 rand = "0.8"
 thiserror = "2"
 keyring = { version = "3.6.3", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
+tauri-plugin-dialog = "2.7.3"
 
 [profile.release]
 strip = true

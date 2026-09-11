@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { save } from "@tauri-apps/plugin-dialog";
 import { loadConnections, saveConnections, sameConnection, type ConnectionConfig } from "./connections";
 
 type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
@@ -28,6 +29,27 @@ const connections = new Map<string, ConnectionState>();
 let activeConnectionId: string | null = null;
 let connectionCounter = 0;
 let savedConnections: ConnectionConfig[] = [];
+const VIEW_STATE_KEY = "postgresui.view-state.v1";
+type ViewState = { database?: string; schema?: string; table?: string };
+
+function viewStateKey(config: ConnectionConfig): string {
+  return config ? `${config.host}:${config.port}:${config.username ?? ""}` : "environment";
+}
+
+function loadViewStates(): Record<string, ViewState> {
+  try {
+    const value: unknown = JSON.parse(localStorage.getItem(VIEW_STATE_KEY) ?? "{}");
+    return value && typeof value === "object" ? value as Record<string, ViewState> : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveViewState(connection: ConnectionState): void {
+  const states = loadViewStates();
+  states[viewStateKey(connection.config)] = { database: connection.database, ...(connection.selected ?? {}) };
+  localStorage.setItem(VIEW_STATE_KEY, JSON.stringify(states));
+}
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const dbSelect = $<HTMLSelectElement>("database-select");
@@ -94,8 +116,13 @@ function createConnectionId(): string {
   return `conn-${++connectionCounter}`;
 }
 
+function connectionSettingsEqual(left: ConnectionConfig, right: ConnectionConfig): boolean {
+  return left === null || right === null ? left === right :
+    left.name === right.name && left.host === right.host && left.port === right.port && left.username === right.username;
+}
+
 function connectionLabel(config: ConnectionConfig): string {
-  return config ? `${config.username ? `${config.username}@` : ""}${config.host}:${config.port}` : "Environment connection";
+  return config?.name || (config ? `${config.username ? `${config.username}@` : ""}${config.host}:${config.port}` : "Environment connection");
 }
 
 function createTab(id: string, label: string): void {
@@ -122,7 +149,40 @@ function createTab(id: string, label: string): void {
     const connection = connections.get(id);
     if (connection?.error) reconnectConnection(connection);
   });
+  tab.addEventListener("contextmenu", (event) => {
+    event.preventDefault();
+    openConnectionMenu(event.clientX, event.clientY, id);
+  });
   tabsContainer.append(tab);
+}
+
+function openConnectionMenu(x: number, y: number, id: string): void {
+  document.querySelector(".connection-context-menu")?.remove();
+  const connection = connections.get(id);
+  if (!connection) return;
+
+  const menu = document.createElement("div");
+  menu.className = "connection-context-menu";
+  menu.setAttribute("role", "menu");
+  menu.style.left = `${Math.min(x, window.innerWidth - 190)}px`;
+  menu.style.top = `${Math.min(y, window.innerHeight - 90)}px`;
+  const reload = button("Reload", "connection-context-menu-item", () => {
+    menu.remove();
+    void createConnection(connection.config, connection, true).catch((error) => toast(message(error), true));
+  });
+  reload.setAttribute("role", "menuitem");
+  const configure = button("Configure", "connection-context-menu-item", () => {
+    menu.remove();
+    if (connection.config) openConnectionDialog(connection);
+  });
+  configure.setAttribute("role", "menuitem");
+  menu.append(reload, configure);
+  document.body.append(menu);
+  const dismiss = (event: MouseEvent): void => {
+    if (!menu.contains(event.target as Node)) menu.remove();
+  };
+  document.addEventListener("mousedown", dismiss, { once: true });
+  window.setTimeout(() => menu.remove(), 5000);
 }
 
 function updateTabs(): void {
@@ -268,6 +328,10 @@ function openConnectionDialog(existing?: ConnectionState): void {
   const form = document.createElement("form");
   form.innerHTML = `
     <div class="form-field">
+      <label for="conn-name">Name <span class="field-meta">(optional)</span></label>
+      <input id="conn-name" name="name" type="text" placeholder="e.g. Production">
+    </div>
+    <div class="form-field">
       <label for="conn-host">Host / IP Address</label>
       <input id="conn-host" name="host" type="text" value="localhost" required>
     </div>
@@ -280,13 +344,15 @@ function openConnectionDialog(existing?: ConnectionState): void {
       <input id="conn-username" name="username" type="text" value="postgres" autocomplete="username" autocapitalize="none" spellcheck="false" required>
     </div>
     <div class="form-field">
-      <label for="conn-password">Password</label>
-      <input id="conn-password" name="password" type="password" autocomplete="current-password">
+      <label for="conn-password">Password ${existing ? '<span class="field-meta">(saved securely; leave blank to keep it)</span>' : ""}</label>
+      <input id="conn-password" name="password" type="password" autocomplete="current-password" placeholder="${existing ? "Leave blank to keep the saved password" : "Enter password"}" aria-describedby="conn-password-help">
+      ${existing ? '<span id="conn-password-help" class="field-meta">Your saved password is stored in the OS credential store and is never shown here.</span>' : ""}
     </div>
   `;
 
   dialog.body.append(form);
   if (existing?.config) {
+    $<HTMLInputElement>("conn-name").value = existing.config.name ?? "";
     $<HTMLInputElement>("conn-host").value = existing.config.host;
     $<HTMLInputElement>("conn-port").value = existing.config.port;
     $<HTMLInputElement>("conn-username").value = existing.config.username ?? "postgres";
@@ -296,6 +362,7 @@ function openConnectionDialog(existing?: ConnectionState): void {
   const connectBtn = button(existing ? "Reconnect" : "Save & Connect", "primary-button", async () => {
     if (connectBtn.disabled || !form.reportValidity()) return;
     const host = $<HTMLInputElement>("conn-host").value.trim();
+    const name = $<HTMLInputElement>("conn-name").value.trim();
     const port = $<HTMLInputElement>("conn-port").value.trim();
     const username = $<HTMLInputElement>("conn-username").value.trim();
     const password = $<HTMLInputElement>("conn-password").value;
@@ -309,9 +376,15 @@ function openConnectionDialog(existing?: ConnectionState): void {
       return;
     }
 
+    const config = { name: name || undefined, host, port, username, password: password || undefined };
+    if (existing && connectionSettingsEqual(existing.config, config) && !password) {
+      dialog.close();
+      return;
+    }
+
     connectBtn.disabled = true;
     try {
-      await createConnection({ host, port, username, password }, existing);
+      await createConnection(config, existing);
       dialog.close();
     } catch (error) {
       toast(message(error), true);
@@ -365,7 +438,8 @@ async function createConnection(config: ConnectionConfig, existing?: ConnectionS
     savedConnections = configs;
     state.config = config;
     state.info = info;
-    state.database = info.currentDatabase;
+    const savedView = loadViewStates()[viewStateKey(config)];
+    state.database = savedView?.database && info.databases.includes(savedView.database) ? savedView.database : info.currentDatabase;
     updateTabs();
 
     if (activeConnectionId === id) {
@@ -447,6 +521,9 @@ async function loadTree(): Promise<void> {
       group.append(toggle, list);
       tree.append(group);
     }
+    const saved = loadViewStates()[viewStateKey(conn.config)];
+    const link = saved?.schema && saved.table ? document.querySelector<HTMLButtonElement>(`.table-link[data-schema="${CSS.escape(saved.schema)}"][data-table="${CSS.escape(saved.table)}"]`) : null;
+    if (saved?.schema && saved.table && link) void selectTable(saved.schema, saved.table, link);
   } catch (error) {
     if (!isCurrent(generation, conn)) return;
     empty(tree);
@@ -465,6 +542,7 @@ async function selectTable(schema: string, table: string, link: HTMLButtonElemen
 
   const generation = ++conn.requestGeneration;
   conn.selected = { schema, table };
+  saveViewState(conn);
 
   document.querySelectorAll(".table-link.active").forEach((el) => el.classList.remove("active"));
   link.classList.add("active");
@@ -591,6 +669,168 @@ function getFilteredRows(): RowItem[] {
         return true;
     }
   });
+}
+
+function csvValue(value: JsonValue): string {
+  if (value === null) return "";
+  const text = typeof value === "object" ? JSON.stringify(value) : String(value);
+  return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+type ExportJob = {
+  panel: HTMLElement;
+  status: HTMLElement;
+  progress: HTMLProgressElement;
+  pauseButton: HTMLButtonElement;
+  cancelled: boolean;
+  paused: boolean;
+  resume: (() => void) | null;
+  path: string | null;
+};
+
+let activeExport: ExportJob | null = null;
+
+function createExportPanel(): ExportJob {
+  document.querySelector(".export-panel")?.remove();
+  const panel = document.createElement("section");
+  panel.className = "export-panel";
+  panel.setAttribute("role", "status");
+  panel.setAttribute("aria-live", "polite");
+
+  const heading = document.createElement("h3");
+  heading.textContent = "Export CSV";
+  const status = document.createElement("p");
+  status.className = "export-panel-status";
+  status.textContent = "Choose what to export.";
+  const progress = document.createElement("progress");
+  progress.className = "export-panel-progress";
+  progress.max = 1;
+  progress.value = 0;
+  const actions = document.createElement("div");
+  actions.className = "export-panel-actions";
+  const pauseButton = button("Pause", "quiet-button", () => undefined);
+  pauseButton.disabled = true;
+  const cancelButton = button("Cancel", "quiet-button", () => undefined);
+  actions.append(pauseButton, cancelButton);
+  panel.append(heading, status, progress, actions);
+  document.body.append(panel);
+
+  const job: ExportJob = { panel, status, progress, pauseButton, cancelled: false, paused: false, resume: null, path: null };
+  pauseButton.onclick = () => {
+    if (pauseButton.disabled) return;
+    job.paused = !job.paused;
+    pauseButton.textContent = job.paused ? "Resume" : "Pause";
+    status.textContent = job.paused ? "Paused" : "Resuming…";
+    if (!job.paused) {
+      job.resume?.();
+      job.resume = null;
+    }
+  };
+  cancelButton.onclick = () => {
+    job.cancelled = true;
+    job.resume?.();
+    job.resume = null;
+    if (job.path) void invoke("remove_export_file", { path: job.path });
+    panel.remove();
+    if (activeExport === job) activeExport = null;
+  };
+  return job;
+}
+
+function waitForExportResume(job: ExportJob): Promise<boolean> {
+  if (job.cancelled) return Promise.resolve(false);
+  if (!job.paused) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    job.resume = () => resolve(!job.cancelled);
+  });
+}
+
+function csvText(columns: ColumnInfo[], rows: RowItem[], includeHeader: boolean): string {
+  const lines = rows.map((row) => columns.map((column) => csvValue(row.values[column.name] ?? null)).join(","));
+  if (includeHeader) lines.unshift(columns.map((column) => csvValue(column.name)).join(","));
+  return `${lines.join("\r\n")}\r\n`;
+}
+
+async function writeCsvChunk(columns: ColumnInfo[], path: string, rows: RowItem[], append: boolean, job: ExportJob): Promise<boolean> {
+  if (!await waitForExportResume(job) || job.cancelled) return false;
+  await invoke("write_export_file", { path, contents: csvText(columns, rows, !append), append });
+  return !job.cancelled;
+}
+
+async function exportCsvRows(rows: RowItem[], path: string, job: ExportJob): Promise<void> {
+  const conn = getActiveConnection();
+  if (!conn || !conn.selected || !conn.metadata) return;
+
+  const columns = conn.metadata.columns;
+  const chunkSize = 500;
+  for (let offset = 0; offset < rows.length || offset === 0; offset += chunkSize) {
+    const chunk = rows.slice(offset, offset + chunkSize);
+    if (!await writeCsvChunk(columns, path, chunk, offset !== 0, job)) return;
+    const written = Math.min(offset + chunk.length, rows.length);
+    job.progress.value = rows.length ? written / rows.length : 1;
+    job.status.textContent = `Writing ${written.toLocaleString()} of ${rows.length.toLocaleString()} rows…`;
+    if (rows.length === 0) break;
+  }
+  if (job.cancelled) return;
+  toast(`Exported ${rows.length.toLocaleString()} row${rows.length === 1 ? "" : "s"}`);
+}
+
+async function exportCsv(): Promise<void> {
+  const conn = getActiveConnection();
+  if (!conn || !conn.selected || !conn.metadata || !conn.page) return;
+  if (activeExport) return;
+
+  const job = createExportPanel();
+  activeExport = job;
+  const exportChoice = async (fullTable: boolean): Promise<void> => {
+    try {
+      const filename = `${conn.selected!.schema}_${conn.selected!.table}_${fullTable ? "full-table" : `page-${conn.page!.page + 1}`}.csv`;
+      job.status.textContent = "Choose a location to save the CSV…";
+      const path = await save({ defaultPath: filename, filters: [{ name: "CSV files", extensions: ["csv"] }] });
+      if (!path || job.cancelled) {
+        job.panel.remove();
+        activeExport = null;
+        return;
+      }
+      job.path = path;
+      choices.hidden = true;
+
+      let rows = getFilteredRows();
+      if (fullTable) {
+        rows = [];
+        const pageCount = Math.ceil(conn.page!.total / 500);
+        job.pauseButton.disabled = false;
+        job.status.textContent = `Loaded 0 of ${conn.page!.total.toLocaleString()} rows…`;
+        if (!await writeCsvChunk(conn.metadata!.columns, path, [], false, job)) return;
+        for (let page = 0; page < pageCount; page++) {
+          if (!await waitForExportResume(job)) return;
+          const result = await invoke<RowPage>("get_rows", { database: conn.database, connection: conn.config, request: { database: conn.database, schema: conn.selected!.schema, table: conn.selected!.table, page, pageSize: 500 } });
+          if (!await writeCsvChunk(conn.metadata!.columns, path, result.rows, true, job)) return;
+          const written = Math.min((page + 1) * 500, conn.page!.total);
+          job.progress.value = conn.page!.total ? written / conn.page!.total : 1;
+          job.status.textContent = `Exported ${written.toLocaleString()} of ${conn.page!.total.toLocaleString()} rows…`;
+        }
+      }
+      if (!fullTable) await exportCsvRows(rows, path, job);
+      if (job.cancelled) return;
+      job.panel.remove();
+      activeExport = null;
+    } catch (error) {
+      if (job.path) void invoke("remove_export_file", { path: job.path });
+      if (!job.cancelled) {
+        toast(`Could not export CSV: ${message(error)}`, true);
+        job.panel.remove();
+        activeExport = null;
+      }
+    }
+  };
+  const choices = document.createElement("div");
+  choices.className = "export-panel-choices";
+  choices.append(
+    button("Current query result", "primary-button", () => void exportChoice(false)),
+    button("Full table", "quiet-button", () => void exportChoice(true)),
+  );
+  job.panel.insertBefore(choices, job.panel.querySelector(".export-panel-progress"));
 }
 
 async function loadRows(nextPage = 0, generation = currentGeneration()): Promise<void> {
@@ -1035,11 +1275,14 @@ dbSelect.addEventListener("change", async () => {
   const conn = getActiveConnection();
   if (!conn) return;
   conn.database = dbSelect.value;
+  conn.selected = null;
+  saveViewState(conn);
   await loadTree();
 });
 
 $("refresh-button").addEventListener("click", loadTree);
 $("reload-rows-button").addEventListener("click", () => loadRows());
+$("export-csv-button").addEventListener("click", exportCsv);
 $("insert-button").addEventListener("click", () => openForm("insert"));
 $<HTMLSelectElement>("page-size").addEventListener("change", () => loadRows(0));
 $("prev-page").addEventListener("click", () => {

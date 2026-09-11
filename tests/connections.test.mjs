@@ -40,6 +40,13 @@ test("host, port, and username are persisted without passwords", () => {
   assert.ok(!storage.getItem("postgresui.connections.v1").includes("not-for-storage"));
 });
 
+test("connection names are persisted and optional", () => {
+  const storage = createStorage();
+  const configs = [{ name: "Production", host: "db.internal", port: "5432", username: "alice" }, { host: "localhost", port: "5432" }];
+  saveConnections(storage, configs);
+  assert.deepEqual(loadConnections(storage), configs);
+});
+
 test("stored passwords are ignored when loading profiles", () => {
   const storage = createStorage();
   storage.setItem("postgresui.connections.v1", JSON.stringify([
@@ -53,7 +60,9 @@ test("malformed saved data is reported without overwriting it", () => {
     '[{"host":"localhost","port":"0"}]', '[{"host":"localhost","port":"65536"}]',
     '[{"host":"localhost","port":5432}]', '[{"host":"localhost","port":"1.5"}]',
     '[{"host":"localhost","port":"5432","username":" "}]',
-    '[{"host":"localhost","port":"5432","username":42}]']) {
+    '[{"host":"localhost","port":"5432","username":42}]',
+    '[{"name":" ","host":"localhost","port":"5432"}]',
+    '[{"name":42,"host":"localhost","port":"5432"}]']) {
     const storage = createStorage();
     storage.setItem("postgresui.connections.v1", value);
     assert.throws(() => loadConnections(storage));
